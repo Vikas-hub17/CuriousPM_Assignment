@@ -1,25 +1,20 @@
-import streamlit as st
-import openai
-import whisper
-from gtts import gTTS
-import pyttsx3
-from moviepy.editor import VideoFileClip
-from pydub import AudioSegment
-import io
-import requests
 import os
 import tempfile
+import streamlit as st
+import openai
+import requests
+import json
 from moviepy.editor import VideoFileClip
-import logging
+import whisper
 
-# Initialize Whisper model (small model to balance speed and accuracy)
+# Load Whisper model for transcription
 whisper_model = whisper.load_model("small")
 
-# Azure OpenAI GPT-4o credentials
-openai.api_key = "22ec84421ec24230a3638d1b51e3a7dc"  # Replace with your actual API key
+# Azure OpenAI GPT-4o connection details
+azure_openai_key = "22ec84421ec24230a3638d1b51e3a7dc"  # Replace with your actual API key
 azure_openai_endpoint = "https://internshala.openai.azure.com/openai/deployments/gpt-4o/chat/completions?api-version=2024-08-01-preview"
 
-
+# Function to transcribe audio from a video file using Whisper
 def transcribe_audio(video_file):
     # Save the uploaded video file to a temporary location
     with tempfile.NamedTemporaryFile(delete=False, suffix=".mp4") as temp_video:
@@ -36,10 +31,12 @@ def transcribe_audio(video_file):
 
         # Transcribe the audio using Whisper
         transcription = whisper_model.transcribe(audio_path)
+
     finally:
         # Ensure proper cleanup by closing the video file and deleting temp files
-        video.close()  # Ensure video is closed before deletion
-        os.remove(temp_video_path)  # Now it is safe to delete the file
+        video.reader.close()  # Close the video reader
+        video.audio.reader.close_proc()  # Close the audio reader process
+        os.remove(temp_video_path)  # Now it is safe to delete the video file
         os.remove(audio_path)  # Remove the audio file
 
     return transcription['text']
@@ -48,72 +45,57 @@ def transcribe_audio(video_file):
 def correct_transcription(transcription):
     prompt = f"Correct the following transcription by removing grammatical errors, filler words (umm, hmm), and improve the overall quality:\n\n{transcription}"
     
-    response = openai.ChatCompletion.create(
-        model="gpt-4",  # or gpt-3.5-turbo, or the specific model you're using
-        messages=[
-            {"role": "system", "content": "You are a helpful assistant."},
-            {"role": "user", "content": prompt}
-        ],
-        max_tokens=500
-    )
-    
-    return response['choices'][0]['message']['content'].strip()
+    try:
+        # Setting up headers for the API request
+        headers = {
+            "Content-Type": "application/json",
+            "api-key": azure_openai_key
+        }
+        
+        # Data to be sent to Azure OpenAI
+        data = {
+            "messages": [{"role": "user", "content": prompt}],
+            "max_tokens": 500
+        }
 
-# Function to synthesize corrected text into speech using gTTS
-def synthesize_audio_gtts(corrected_text):
-    tts = gTTS(text=corrected_text, lang='en')
-    audio_path = "corrected_audio.mp3"
-    tts.save(audio_path)
-    return audio_path
+        # Making the POST request to Azure OpenAI
+        response = requests.post(azure_openai_endpoint, headers=headers, json=data)
 
-# Alternative function to synthesize corrected text into speech using pyttsx3 (Offline)
-def synthesize_audio_pyttsx(corrected_text):
-    engine = pyttsx3.init()
-    audio_path = "corrected_audio.mp3"
-    engine.save_to_file(corrected_text, audio_path)
-    engine.runAndWait()
-    return audio_path
-
-# Function to replace the original video's audio with the AI-generated audio
-def replace_audio(video_file, new_audio_path):
-    video = VideoFileClip(video_file.name)
-    
-    # Load new audio
-    audio = AudioSegment.from_file(new_audio_path, format="mp3")
-    
-    # Replace video audio with new audio
-    video = video.set_audio(audio)
-    
-    # Save the new video
-    output_path = "output_video.mp4"
-    video.write_videofile(output_path, codec="libx264")
-    return output_path
+        if response.status_code == 200:
+            result = response.json()  # Parse the JSON response
+            return result['choices'][0]['message']['content'].strip()
+        else:
+            return f"Failed to connect: {response.status_code} - {response.text}"
+    except Exception as e:
+        return f"An error occurred: {str(e)}"
 
 # Streamlit UI
-st.title("AI-Powered Video Audio Replacement (Without Google Cloud)")
+def main():
+    st.title("AI-Powered Video Audio Replacement and Azure OpenAI GPT-4o")
 
-video_file = st.file_uploader("Upload Video for Audio Replacement", type=["mp4", "mov", "avi"])
+    # Step 1: Test Azure OpenAI Connection
+    if st.button("Test Azure OpenAI GPT-4o Connection"):
+        st.write("Testing connection...")
+        prompt = "Hello, Azure OpenAI!"
+        response = correct_transcription(prompt)
+        st.write(f"Azure OpenAI Response: {response}")
 
-if video_file and st.button("Process Video"):
-    with st.spinner("Processing..."):
-        # Step 1: Transcribe the video using Whisper
-        transcription = transcribe_audio(video_file)
-        st.write("Original Transcription:", transcription)
+    # Step 2: Upload Video File for Audio Transcription and Correction
+    video_file = st.file_uploader("Upload Video for Transcription and Audio Replacement", type=["mp4", "mov", "avi"])
 
-        # Step 2: Correct transcription using GPT-4o
-        corrected_text = correct_transcription(transcription)
-        st.write("Corrected Transcription:", corrected_text)
+    if video_file and st.button("Process Video"):
+        with st.spinner("Processing..."):
+            # Step 3: Extract and transcribe audio
+            transcription = transcribe_audio(video_file)
+            st.write("Original Transcription:", transcription)
 
-        # Step 3: Synthesize AI audio from corrected transcription
-        # Option 1: Using gTTS (online)
-        new_audio_path = synthesize_audio_gtts(corrected_text)
+            # Step 4: Correct transcription using GPT-4o
+            corrected_text = correct_transcription(transcription)
+            st.write("Corrected Transcription:", corrected_text)
 
-        # Option 2: Using pyttsx3 (offline)
-        # new_audio_path = synthesize_audio_pyttsx(corrected_text)
+            # Step 5: Display success message (video processing can be added here)
+            st.success("Transcription corrected and displayed successfully!")
 
-        # Step 4: Replace original video audio with generated audio
-        output_video = replace_audio(video_file, new_audio_path)
+if __name__ == "__main__":
+    main()
 
-        # Step 5: Display the output video with new audio
-        st.video(output_video)
-        st.success("Audio replaced successfully!")
