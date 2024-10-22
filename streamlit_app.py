@@ -10,6 +10,7 @@ import requests
 import os
 import tempfile
 from moviepy.editor import VideoFileClip
+import logging
 
 # Initialize Whisper model (small model to balance speed and accuracy)
 whisper_model = whisper.load_model("small")
@@ -18,29 +19,31 @@ whisper_model = whisper.load_model("small")
 openai.api_key = "22ec84421ec24230a3638d1b51e3a7dc"  # Replace with your actual API key
 azure_openai_endpoint = "https://internshala.openai.azure.com/openai/deployments/gpt-4o/chat/completions?api-version=2024-08-01-preview"
 
-# Function to transcribe audio using Whisper
+
 def transcribe_audio(video_file):
     # Save the uploaded video file to a temporary location
     with tempfile.NamedTemporaryFile(delete=False, suffix=".mp4") as temp_video:
         temp_video.write(video_file.read())
         temp_video_path = temp_video.name
 
-    # Use MoviePy to read the video from the temporary file
-    video = VideoFileClip(temp_video_path)
+    try:
+        # Load video using MoviePy from the temporary file
+        video = VideoFileClip(temp_video_path)
 
-    # Extract audio and save it as a temporary audio file
-    audio_path = os.path.join(tempfile.gettempdir(), "audio.wav")
-    video.audio.write_audiofile(audio_path)
+        # Extract the audio and save it as a temporary file
+        audio_path = os.path.join(tempfile.gettempdir(), "audio.wav")
+        video.audio.write_audiofile(audio_path)
 
-    # Use Whisper (or any other ASR) to transcribe the audio
-    transcription = whisper_model.transcribe(audio_path)
-    
-    # Delete the temporary files after processing
-    os.remove(temp_video_path)
-    os.remove(audio_path)
+        # Transcribe the audio using Whisper
+        transcription = whisper_model.transcribe(audio_path)
+    finally:
+        # Ensure proper cleanup by closing the video file and deleting temp files
+        video.close()  # Ensure video is closed before deletion
+        os.remove(temp_video_path)  # Now it is safe to delete the file
+        os.remove(audio_path)  # Remove the audio file
 
     return transcription['text']
-
+    
 # Function to correct transcription using Azure OpenAI GPT-4o
 def correct_transcription(transcription):
     prompt = f"Correct the following transcription by removing grammatical errors, filler words (umm, hmm), and improve the overall quality:\n\n{transcription}"
