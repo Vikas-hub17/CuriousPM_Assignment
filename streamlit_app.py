@@ -7,6 +7,9 @@ from moviepy.editor import VideoFileClip
 from pydub import AudioSegment
 import io
 import requests
+import os
+import tempfile
+from moviepy.editor import VideoFileClip
 
 # Initialize Whisper model (small model to balance speed and accuracy)
 whisper_model = whisper.load_model("small")
@@ -17,13 +20,25 @@ azure_openai_endpoint = "https://internshala.openai.azure.com/openai/deployments
 
 # Function to transcribe audio using Whisper
 def transcribe_audio(video_file):
-    # Extract audio from the video
-    video = VideoFileClip(video_file.name)
-    audio_path = "audio.wav"
+    # Save the uploaded video file to a temporary location
+    with tempfile.NamedTemporaryFile(delete=False, suffix=".mp4") as temp_video:
+        temp_video.write(video_file.read())
+        temp_video_path = temp_video.name
+
+    # Use MoviePy to read the video from the temporary file
+    video = VideoFileClip(temp_video_path)
+
+    # Extract audio and save it as a temporary audio file
+    audio_path = os.path.join(tempfile.gettempdir(), "audio.wav")
     video.audio.write_audiofile(audio_path)
 
-    # Use Whisper to transcribe audio
+    # Use Whisper (or any other ASR) to transcribe the audio
     transcription = whisper_model.transcribe(audio_path)
+    
+    # Delete the temporary files after processing
+    os.remove(temp_video_path)
+    os.remove(audio_path)
+
     return transcription['text']
 
 # Function to correct transcription using Azure OpenAI GPT-4o
