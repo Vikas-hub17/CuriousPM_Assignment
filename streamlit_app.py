@@ -43,16 +43,21 @@ def transcribe_audio(video_file):
         os.remove(audio_path)  # Remove the audio file
 
     return transcription['text']
-    
+
 # Function to correct transcription using Azure OpenAI GPT-4o
 def correct_transcription(transcription):
     prompt = f"Correct the following transcription by removing grammatical errors, filler words (umm, hmm), and improve the overall quality:\n\n{transcription}"
-    response = openai.Completion.create(
-        engine="gpt-4o",
-        prompt=prompt,
+    
+    response = openai.ChatCompletion.create(
+        model="gpt-4",  # or gpt-3.5-turbo, or the specific model you're using
+        messages=[
+            {"role": "system", "content": "You are a helpful assistant."},
+            {"role": "user", "content": prompt}
+        ],
         max_tokens=500
     )
-    return response.choices[0].text.strip()
+    
+    return response['choices'][0]['message']['content'].strip()
 
 # Function to synthesize corrected text into speech using gTTS
 def synthesize_audio_gtts(corrected_text):
