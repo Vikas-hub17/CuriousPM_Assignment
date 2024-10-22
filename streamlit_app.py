@@ -1,43 +1,30 @@
 import streamlit as st
-from google.cloud import speech_v1p1beta1 as speech
-from google.cloud import texttospeech
 import openai
+import whisper
+from gtts import gTTS
+import pyttsx3
 from moviepy.editor import VideoFileClip
 from pydub import AudioSegment
 import io
 import requests
-import json
+
+# Initialize Whisper model (small model to balance speed and accuracy)
+whisper_model = whisper.load_model("small")
 
 # Azure OpenAI GPT-4o credentials
 openai.api_key = "22ec84421ec24230a3638d1b51e3a7dc"  # Replace with your actual API key
 azure_openai_endpoint = "https://internshala.openai.azure.com/openai/deployments/gpt-4o/chat/completions?api-version=2024-08-01-preview"
 
-# Function to connect to Azure OpenAI GPT-4o and get a basic response
-def test_openai_connection():
-    headers = {
-        "Content-Type": "application/json",
-        "api-key": openai.api_key
-    }
-    data = {
-        "messages": [{"role": "user", "content": "Hello, Azure OpenAI!"}],
-        "max_tokens": 50
-    }
-    response = requests.post(azure_openai_endpoint, headers=headers, json=data)
-    if response.status_code == 200:
-        result = response.json()
-        return result["choices"][0]["message"]["content"].strip()
-    else:
-        return f"Failed: {response.status_code} - {response.text}"
+# Function to transcribe audio using Whisper
+def transcribe_audio(video_file):
+    # Extract audio from the video
+    video = VideoFileClip(video_file.name)
+    audio_path = "audio.wav"
+    video.audio.write_audiofile(audio_path)
 
-# Function to transcribe video audio using Google Speech-to-Text
-def transcribe_audio(audio_file):
-    client = speech.SpeechClient()
-    audio = speech.RecognitionAudio(content=audio_file.read())
-    config = speech.RecognitionConfig(language_code="en-US")
-
-    response = client.recognize(config=config, audio=audio)
-    transcription = "".join([result.alternatives[0].transcript for result in response.results])
-    return transcription
+    # Use Whisper to transcribe audio
+    transcription = whisper_model.transcribe(audio_path)
+    return transcription['text']
 
 # Function to correct transcription using Azure OpenAI GPT-4o
 def correct_transcription(transcription):
@@ -49,53 +36,61 @@ def correct_transcription(transcription):
     )
     return response.choices[0].text.strip()
 
-# Function to generate audio from corrected transcription using Google Text-to-Speech
-def synthesize_audio(corrected_text):
-    client = texttospeech.TextToSpeechClient()
-    input_text = texttospeech.SynthesisInput(text=corrected_text)
-    voice = texttospeech.VoiceSelectionParams(language_code="en-US", name="en-US-Journey")
-    audio_config = texttospeech.AudioConfig(audio_encoding=texttospeech.AudioEncoding.MP3)
+# Function to synthesize corrected text into speech using gTTS
+def synthesize_audio_gtts(corrected_text):
+    tts = gTTS(text=corrected_text, lang='en')
+    audio_path = "corrected_audio.mp3"
+    tts.save(audio_path)
+    return audio_path
 
-    response = client.synthesize_speech(input=input_text, voice=voice, audio_config=audio_config)
-    return response.audio_content
+# Alternative function to synthesize corrected text into speech using pyttsx3 (Offline)
+def synthesize_audio_pyttsx(corrected_text):
+    engine = pyttsx3.init()
+    audio_path = "corrected_audio.mp3"
+    engine.save_to_file(corrected_text, audio_path)
+    engine.runAndWait()
+    return audio_path
 
 # Function to replace the original video's audio with the AI-generated audio
-def replace_audio(video_file, new_audio):
+def replace_audio(video_file, new_audio_path):
     video = VideoFileClip(video_file.name)
-    audio = AudioSegment.from_file(io.BytesIO(new_audio), format="mp3")
+    
+    # Load new audio
+    audio = AudioSegment.from_file(new_audio_path, format="mp3")
+    
+    # Replace video audio with new audio
     video = video.set_audio(audio)
+    
+    # Save the new video
     output_path = "output_video.mp4"
     video.write_videofile(output_path, codec="libx264")
     return output_path
 
 # Streamlit UI
-st.title("AI-Powered Video Audio Replacement with Azure OpenAI GPT-4o")
+st.title("AI-Powered Video Audio Replacement (Without Google Cloud)")
 
-# Step 1: Test Azure OpenAI Connection
-if st.button("Test Azure OpenAI Connection"):
-    st.write("Connecting to Azure OpenAI GPT-4o...")
-    result = test_openai_connection()
-    st.write(f"Azure OpenAI Response: {result}")
-
-# Step 2: Upload Video File for Audio Replacement
 video_file = st.file_uploader("Upload Video for Audio Replacement", type=["mp4", "mov", "avi"])
 
 if video_file and st.button("Process Video"):
     with st.spinner("Processing..."):
-        # Step 3: Extract and transcribe audio
+        # Step 1: Transcribe the video using Whisper
         transcription = transcribe_audio(video_file)
         st.write("Original Transcription:", transcription)
 
-        # Step 4: Correct transcription using GPT-4o
+        # Step 2: Correct transcription using GPT-4o
         corrected_text = correct_transcription(transcription)
         st.write("Corrected Transcription:", corrected_text)
 
-        # Step 5: Generate AI audio from corrected transcription
-        new_audio = synthesize_audio(corrected_text)
+        # Step 3: Synthesize AI audio from corrected transcription
+        # Option 1: Using gTTS (online)
+        new_audio_path = synthesize_audio_gtts(corrected_text)
 
-        # Step 6: Replace original video audio with generated audio
-        output_video = replace_audio(video_file, new_audio)
+        # Option 2: Using pyttsx3 (offline)
+        # new_audio_path = synthesize_audio_pyttsx(corrected_text)
 
-        # Step 7: Display the output video with new audio
+        # Step 4: Replace original video audio with generated audio
+        output_video = replace_audio(video_file, new_audio_path)
+
+        # Step 5: Display the output video with new audio
         st.video(output_video)
         st.success("Audio replaced successfully!")
